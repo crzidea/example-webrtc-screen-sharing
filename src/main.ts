@@ -1,5 +1,5 @@
 import "./style.css";
-import { getStreamFromCamera, playVideoWithStream } from "./media-devices";
+import { getStreamFromCamera, getStreamFromDisplayMedia, playVideoWithStream } from "./media-devices";
 import { initReceiver, initSender } from "./peer-connections";
 
 const matches = document.location.hash.match(/^\#\/(sender|receiver)\//);
@@ -21,6 +21,7 @@ if ("receiver" === role) {
   }
   const senderId = matches[1];
   const stream = await getStreamFromCamera();
+  // const stream = await getStreamFromDisplayMedia();
   playVideoWithStream(stream);
   initSender(senderId, stream);
 }

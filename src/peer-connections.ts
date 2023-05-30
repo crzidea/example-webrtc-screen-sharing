@@ -5,14 +5,14 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const configuration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  // iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   // iceServers: [{ urls: "stun:stun.qq.com:3478" }],
-  // iceServers: [{ urls: "stun:stun.miwifi.com:3478" }],
+  iceServers: [{ urls: "stun:stun.miwifi.com:3478" }],
   // iceServers: [{ urls: "stun:stun.cloopen.com:3478" }],
 };
 
 function getChannelName(senderId: string) {
-  return `webrtc_signals:sender_id:${senderId}`;
+  return `webrtc_signals:sender:${senderId}`;
 }
 
 type ReceiverPresence = {
@@ -22,7 +22,6 @@ type ReceiverPresence = {
 
 export async function initSender(senderId: string, stream: MediaStream) {
   const peerConnectionMap = new Map<string, RTCPeerConnection>();
-  const candidateListMap = new Map<string, RTCIceCandidateInit[]>();
   const channel = supabase.channel(getChannelName(senderId), {
     config: {
       presence: {
@@ -40,19 +39,6 @@ export async function initSender(senderId: string, stream: MediaStream) {
         }
         return
       }
-      if (candidates) {
-        const peerConnection = peerConnectionMap.get(payload.key);
-        if (peerConnection) {
-          if (
-            "stable" === peerConnection.signalingState &&
-            "closed" !== peerConnection.connectionState
-          ) {
-            await addIceCandidate(payload.key, peerConnection, candidates);
-          } else {
-            candidateListMap.set(payload.key, candidates);
-          }
-        }
-      }
       if (answer) {
         let peerConnection = peerConnectionMap.get(payload.key);
         if (peerConnection) {
@@ -61,12 +47,24 @@ export async function initSender(senderId: string, stream: MediaStream) {
             const remoteDesc = new RTCSessionDescription(answer);
             await peerConnection.setRemoteDescription(remoteDesc);
             addIceCandidate(payload.key, peerConnection, candidates);
+            await channel.track({});
+          }
+        }
+      }
+      if (candidates) {
+        const peerConnection = peerConnectionMap.get(payload.key);
+        if (peerConnection) {
+          if (
+            "stable" === peerConnection.signalingState &&
+            "closed" !== peerConnection.connectionState
+          ) {
+            await addIceCandidate(payload.key, peerConnection, candidates);
           }
         }
       }
     })
     .subscribe(async () => {
-      channel.track({});
+      await channel.track({});
     });
 
   async function addIceCandidate(
@@ -75,22 +73,19 @@ export async function initSender(senderId: string, stream: MediaStream) {
     candidates?: RTCIceCandidateInit[]
   ) {
     peerConnection = peerConnection || peerConnectionMap.get(key);
-    candidates = candidates || candidateListMap.get(key);
     if (candidates) {
       for await (const candidate of candidates) {
         await peerConnection.addIceCandidate(candidate);
       }
-      candidateListMap.delete(key);
     }
   }
   async function createOffer(key: string) {
     // close old peer connection
     peerConnectionMap.get(key)?.close();
     peerConnectionMap.delete(key);
-    candidateListMap.delete(key);
 
     const peerConnection = new RTCPeerConnection(configuration);
-    peerConnection.addEventListener("connectionstatechange", () => {
+    peerConnection.addEventListener("connectionstatechange", async () => {
       if (peerConnection?.connectionState === "connected") {
         // debugger;
       }
@@ -101,7 +96,7 @@ export async function initSender(senderId: string, stream: MediaStream) {
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     peerConnectionMap.set(key, peerConnection);
-    channel.track({ offer });
+    await channel.track({ offer });
     return peerConnection;
   }
 }
@@ -125,6 +120,7 @@ export async function initReceiver(
       if (!offer) {
         return;
       }
+      let stream: MediaStream;
       const peerConnection = new RTCPeerConnection(configuration);
       peerConnection.addEventListener("icecandidate", async (event) => {
         const candidate = event.candidate?.toJSON();
@@ -138,11 +134,11 @@ export async function initReceiver(
       peerConnection.addEventListener("connectionstatechange", () => {
         if (peerConnection?.connectionState === "connected") {
           // debugger;
+          onStream(stream);
         }
       });
       peerConnection.addEventListener("track", (event) => {
-        const stream = event.streams[0];
-        onStream(stream);
+        stream = event.streams[0];
       });
       peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peerConnection.createAnswer();
