@@ -7,9 +7,18 @@
         {
             "type": "chrome",
             "request": "launch",
-            "name": "Launch Chrome against localhost",
-            "url": "http://localhost:5173/",
-            "webRoot": "${workspaceFolder}"
+            "name": "sender",
+            "url": "http://localhost:5173/#/sender/1",
+            "webRoot": "${workspaceFolder}",
+            "resolveSourceMapLocations": ["!**/node_modules/**"],
+        },
+        {
+            "type": "chrome",
+            "request": "launch",
+            "name": "receiver",
+            "url": "http://localhost:5173/#/receiver/1/1",
+            "webRoot": "${workspaceFolder}",
+            "resolveSourceMapLocations": ["!**/node_modules/**"],
         }
     ]
 }
