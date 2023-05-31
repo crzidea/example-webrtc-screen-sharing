@@ -1,5 +1,5 @@
 // Updates the select element with the provided set of cameras
-function updateCameraList(cameras: MediaDeviceInfo[]) {
+export function updateCameraList(cameras: MediaDeviceInfo[]) {
   const listElement = document.querySelector<HTMLSelectElement>(
     "select#availableCameras"
   );

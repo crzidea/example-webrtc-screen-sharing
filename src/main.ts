@@ -1,6 +1,6 @@
 import "./style.css";
 import { getStreamFromCamera, getStreamFromDisplayMedia, playVideoWithStream } from "./media-devices";
-import { initReceiver, initSender } from "./peer-connections";
+import { startReceiving, startStreaming } from "./peer-connections";
 
 const matches = document.location.hash.match(/^\#\/(sender|receiver)\//);
 const role = matches ? matches[1] : "sender";
@@ -10,18 +10,23 @@ if ("receiver" === role) {
   if (!matches) {
     throw new Error("Receiver id and sender id not found in URL hash");
   }
-  const senderId = matches[1];
+  const roomId = matches[1];
   const receiverId = matches[2];
-  initReceiver(senderId, receiverId, playVideoWithStream);
+  startReceiving(roomId, receiverId, playVideoWithStream);
 } else {
   // Get sender id from hash
   const matches = document.location.hash.match(/^\#\/sender\/(.*)$/);
   if (!matches) {
     throw new Error("Sender id not found in URL hash");
   }
-  const senderId = matches[1];
-  const stream = await getStreamFromCamera();
-  // const stream = await getStreamFromDisplayMedia();
+  const roomId = matches[1];
+  let stream
+  const MEDIA_STREAM = import.meta.env.VITE_MEDIA_STREAM;
+  if ('display' === MEDIA_STREAM) {
+    stream = await getStreamFromDisplayMedia();
+  } else {
+    stream = await getStreamFromCamera();
+  }
   playVideoWithStream(stream);
-  initSender(senderId, stream);
+  startStreaming(roomId, stream);
 }

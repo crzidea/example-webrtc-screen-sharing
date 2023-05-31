@@ -1,153 +1,318 @@
-import { createClient } from "@supabase/supabase-js";
+import { RealtimeChannel, createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
+const stunUrl = import.meta.env.VITE_STUN_URL;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const configuration = {
   // iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   // iceServers: [{ urls: "stun:stun.qq.com:3478" }],
-  iceServers: [{ urls: "stun:stun.miwifi.com:3478" }],
-  // iceServers: [{ urls: "stun:stun.cloopen.com:3478" }],
+  // iceServers: [{ urls: "stun:stun.miwifi.com:3478" }],
+  iceServers: [{ urls: stunUrl }],
 };
 
-function getChannelName(senderId: string) {
-  return `webrtc_signals:sender:${senderId}`;
+type SupabaseSignalingChannelEventMap = {
+  join: {
+    userId: string;
+  };
+  offer: RTCSessionDescriptionInit;
+  answer: {
+    userId: string;
+    init: RTCSessionDescriptionInit;
+  };
+  candidates: {
+    init: RTCIceCandidateInit[];
+    userId?: string;
+  };
+};
+
+declare type SupabaseSignalingChannelEvent<
+  K extends keyof SupabaseSignalingChannelEventMap
+> = CustomEvent<SupabaseSignalingChannelEventMap[K]> & {
+  new (
+    type: K,
+    eventInitDict?: SupabaseSignalingChannelEventMap[K]
+  ): SupabaseSignalingChannelEvent<K>;
+};
+const SupabaseSignalingChannelEvent = CustomEvent;
+
+declare interface SupabaseSignalingChannel {
+  addEventListener<K extends keyof SupabaseSignalingChannelEventMap>(
+    type: K,
+    callback: (event: SupabaseSignalingChannelEvent<K>) => void,
+    options?: boolean | AddEventListenerOptions | undefined
+  ): void;
+  addEventListener(
+    type: string,
+    callback: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions | undefined
+  ): void;
+  dispatchEvent(
+    event: SupabaseSignalingChannelEvent<keyof SupabaseSignalingChannelEventMap>
+  ): boolean;
+  dispatchEvent(event: Event): boolean;
 }
 
-type ReceiverPresence = {
-  answer?: RTCSessionDescriptionInit;
-  candidates?: RTCIceCandidateInit[];
-};
-
-export async function initSender(senderId: string, stream: MediaStream) {
-  const peerConnectionMap = new Map<string, RTCPeerConnection>();
-  const channel = supabase.channel(getChannelName(senderId), {
-    config: {
-      presence: {
-        key: `sender:${senderId}`,
+class SupabaseSignalingChannel extends EventTarget {
+  private roomChannel: RealtimeChannel;
+  private userChannels: Map<string, RealtimeChannel> = new Map();
+  private selfUserChannel?: RealtimeChannel;
+  private roomId: string;
+  private userId: string;
+  constructor(roomId: string, userId?: string) {
+    super();
+    this.roomId = roomId;
+    this.userId = userId || crypto.randomUUID();
+    this.roomChannel = supabase.channel(this.roomChannelName(), {
+      config: {
+        presence: {
+          key: this.userId,
+        },
       },
-    },
-  });
-  channel
-    .on("presence", { event: "join" }, async (payload) => {
-      const presence = payload.newPresences[payload.newPresences.length - 1];
-      const { answer, candidates } = presence as ReceiverPresence;
-      if (!answer && !candidates) {
-        if (/receiver\:/.test(payload.key)) {
-          await createOffer(payload.key);
-        }
-        return
-      }
-      if (answer) {
-        let peerConnection = peerConnectionMap.get(payload.key);
-        if (peerConnection) {
-          if ("stable" !== peerConnection.signalingState) {
-            // peerConnection = await createOffer(payload.key);
-            const remoteDesc = new RTCSessionDescription(answer);
-            await peerConnection.setRemoteDescription(remoteDesc);
-            addIceCandidate(payload.key, peerConnection, candidates);
-            await channel.track({});
-          }
-        }
-      }
-      if (candidates) {
-        const peerConnection = peerConnectionMap.get(payload.key);
-        if (peerConnection) {
-          if (
-            "stable" === peerConnection.signalingState &&
-            "closed" !== peerConnection.connectionState
-          ) {
-            await addIceCandidate(payload.key, peerConnection, candidates);
-          }
-        }
-      }
-    })
-    .subscribe(async () => {
-      await channel.track({});
     });
+  }
+  roomChannelName() {
+    return `webrtc_signals:room:${this.roomId}`;
+  }
+  userChannelName(userId: string) {
+    return `webrtc_signals:room:${this.roomId}:user:${userId}`;
+  }
+  async startStreaming() {
+    this.roomChannel.on("presence", { event: "join" }, async (payload) => {
+      console.log("presence join", payload);
+      const { key: userId } = payload;
+      if (this.userChannels.has(userId)) {
+        return;
+      }
+      const userChannel = supabase.channel(this.userChannelName(userId));
+      userChannel.on("broadcast", { event: "answer" }, async (payload) => {
+        const answer: RTCSessionDescriptionInit = payload.answer;
+        this.dispatchEvent(
+          new SupabaseSignalingChannelEvent("answer", {
+            detail: { init: answer, userId },
+          })
+        );
+      });
+      userChannel.on("broadcast", { event: "candidates" }, async (payload) => {
+        const candidates: RTCIceCandidateInit[] = payload.candidates;
+        this.dispatchEvent(
+          new SupabaseSignalingChannelEvent("candidates", {
+            detail: { init: candidates, userId },
+          })
+        );
+      });
+      this.userChannels.set(userId, userChannel);
+      await new Promise((resolve) => {
+        userChannel.subscribe((result) => {
+          this.dispatchEvent(
+            new SupabaseSignalingChannelEvent("join", { detail: { userId } })
+          );
+          resolve(result);
+        });
+      });
+    });
+    await new Promise((resolve) => {
+      this.roomChannel.subscribe(resolve);
+    });
+  }
+  async sendOffer(userId: string, offer: RTCSessionDescriptionInit) {
+    const userChannel = this.userChannels.get(userId);
+    await userChannel?.send({
+      type: "broadcast",
+      event: "offer",
+      offer,
+    });
+  }
 
-  async function addIceCandidate(
-    key: string,
-    peerConnection: RTCPeerConnection,
-    candidates?: RTCIceCandidateInit[]
-  ) {
-    peerConnection = peerConnection || peerConnectionMap.get(key);
-    if (candidates) {
-      for await (const candidate of candidates) {
-        await peerConnection.addIceCandidate(candidate);
+  async startReceiving() {
+    const userChannel = supabase.channel(this.userChannelName(this.userId));
+    userChannel.on("broadcast", { event: "offer" }, async (payload) => {
+      const offer: RTCSessionDescriptionInit = payload.offer;
+      this.dispatchEvent(
+        new SupabaseSignalingChannelEvent("offer", { detail: offer })
+      );
+    });
+    userChannel.on("broadcast", { event: "candidates" }, async (payload) => {
+      const candidates: RTCIceCandidateInit[] = payload.candidates;
+      this.dispatchEvent(
+        new SupabaseSignalingChannelEvent("candidates", {
+          detail: { init: candidates },
+        })
+      );
+    });
+    this.selfUserChannel = userChannel;
+    await new Promise((resolve) => {
+      userChannel.subscribe(() => {
+        this.roomChannel.subscribe(async () => {
+          const result = await this.roomChannel.track({ userId: this.userId });
+          resolve(result);
+        });
+      });
+    });
+  }
+  async sendAnswer(answer: RTCSessionDescriptionInit) {
+    await this.selfUserChannel?.send({
+      type: "broadcast",
+      event: "answer",
+      answer,
+    });
+  }
+  async sendCandidate(candidates: RTCIceCandidateInit[], userId?: string) {
+    let userChannel: RealtimeChannel | undefined;
+    if (userId) {
+      userChannel = this.userChannels.get(userId);
+      if (!userChannel) {
+        throw new Error(`user channel not found: ${userId}`);
+      }
+    } else {
+      userChannel = this.selfUserChannel;
+      if (!userChannel) {
+        throw new Error(`self user channel not found`);
       }
     }
+    const result = await userChannel.send({
+      type: "broadcast",
+      event: "candidates",
+      candidates: candidates,
+    });
+    return result;
   }
-  async function createOffer(key: string) {
+}
+
+const candidatesMap = new Map<RTCPeerConnection, RTCIceCandidateInit[]>();
+async function addIceCandidate(
+  peerConnection: RTCPeerConnection,
+  candidates?: RTCIceCandidateInit[]
+) {
+  if ("stable" !== peerConnection.signalingState) {
+    if (candidates) {
+      candidatesMap.set(peerConnection, candidates);
+    }
+    return;
+  }
+  const _candidates = candidates || candidatesMap.get(peerConnection);
+  if (!_candidates) {
+    return;
+  }
+  candidatesMap.delete(peerConnection);
+  const promises = _candidates.map((candidate) =>
+    peerConnection.addIceCandidate(candidate)
+  );
+  await Promise.all(promises);
+}
+
+function collectAndSendCandicates(
+  peerConnection: RTCPeerConnection,
+  channel: SupabaseSignalingChannel,
+  userId?: string
+) {
+  const CANDICATES_MAX_WAIT_TIME = 100;
+  let candidates: RTCIceCandidateInit[] = [];
+  const lastSendTime: number = Date.now();
+  peerConnection.addEventListener("icecandidate", async (event) => {
+    const candidate = event.candidate?.toJSON();
+    if (!candidate) {
+      console.log("receiver icecandidate end");
+      await channel.sendCandidate(candidates, userId);
+      return;
+    } else if (Date.now() - lastSendTime > CANDICATES_MAX_WAIT_TIME) {
+      console.log("receiver icecandidate batch send");
+      await channel.sendCandidate(candidates, userId);
+      candidates = [];
+    }
+    console.log("receiver icecandidate", candidate);
+    candidates.push(candidate);
+  });
+}
+
+export async function startStreaming(roomId: string, stream: MediaStream) {
+  const channel = new SupabaseSignalingChannel(roomId);
+  const peerConnectionMap = new Map<string, RTCPeerConnection>();
+  channel.addEventListener("join", async (event) => {
+    const { userId } = event.detail;
     // close old peer connection
-    peerConnectionMap.get(key)?.close();
-    peerConnectionMap.delete(key);
+    peerConnectionMap.get(userId)?.close();
+    peerConnectionMap.delete(userId);
 
     const peerConnection = new RTCPeerConnection(configuration);
     peerConnection.addEventListener("connectionstatechange", async () => {
-      if (peerConnection?.connectionState === "connected") {
-        // debugger;
-      }
+      console.log(
+        "sender connectionstatechange",
+        peerConnection.connectionState
+      );
     });
+    collectAndSendCandicates(peerConnection, channel, userId);
     stream.getTracks().forEach((track) => {
-      peerConnection?.addTrack(track, stream);
+      peerConnection.addTrack(track, stream);
     });
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    peerConnectionMap.set(key, peerConnection);
-    await channel.track({ offer });
-    return peerConnection;
-  }
+    peerConnectionMap.set(userId, peerConnection);
+    await channel.sendOffer(userId, offer);
+  });
+
+  channel.addEventListener("answer", async (event) => {
+    console.log("sender receive answer", event.detail);
+    const init: RTCSessionDescriptionInit = event.detail.init;
+    const userId = event.detail.userId;
+    const peerConnection = peerConnectionMap.get(userId);
+    if (!peerConnection) {
+      throw new Error("peer connection not found");
+    }
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(init));
+    await addIceCandidate(peerConnection);
+  });
+
+  channel.addEventListener("candidates", async (event) => {
+    console.log("sender receive candidate", event.detail);
+    const init: RTCIceCandidateInit[] = event.detail.init;
+    const userId = event.detail.userId;
+    if (!userId) {
+      throw new Error("userId not found");
+    }
+    const peerConnection = peerConnectionMap.get(userId);
+    if (!peerConnection) {
+      throw new Error("peer connection not found");
+    }
+    await addIceCandidate(peerConnection, init);
+  });
+
+  await channel.startStreaming();
 }
 
-export async function initReceiver(
-  senderId: string,
-  receiverId: string,
+export async function startReceiving(
+  roomId: string,
+  userId: string,
   onStream: (stream: MediaStream) => void
 ) {
-  const channel = supabase.channel(getChannelName(senderId), {
-    config: {
-      presence: {
-        key: `receiver:${receiverId}`,
-      },
-    },
+  const channel = new SupabaseSignalingChannel(roomId, userId);
+  const peerConnection = new RTCPeerConnection(configuration);
+  collectAndSendCandicates(peerConnection, channel);
+  peerConnection.addEventListener("connectionstatechange", () => {
+    console.log(
+      "receiver connectionstatechange",
+      peerConnection.connectionState
+    );
   });
-  let presence: ReceiverPresence;
-  channel
-    .on("presence", { event: "join" }, async (payload) => {
-      const { offer } = payload.newPresences[payload.newPresences.length - 1];
-      if (!offer) {
-        return;
-      }
-      let stream: MediaStream;
-      const peerConnection = new RTCPeerConnection(configuration);
-      peerConnection.addEventListener("icecandidate", async (event) => {
-        const candidate = event.candidate?.toJSON();
-        if (!candidate) {
-          return;
-        }
-        presence.candidates = presence.candidates || [];
-        presence.candidates.push(candidate);
-        await channel.track(presence);
-      });
-      peerConnection.addEventListener("connectionstatechange", () => {
-        if (peerConnection?.connectionState === "connected") {
-          // debugger;
-          onStream(stream);
-        }
-      });
-      peerConnection.addEventListener("track", (event) => {
-        stream = event.streams[0];
-      });
-      peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      presence.answer = { sdp: answer.sdp, type: answer.type };
-      await channel.track(presence);
-    })
-    .subscribe(async () => {
-      presence = {};
-      await channel.track(presence);
-    });
+  peerConnection.addEventListener("track", (event) => {
+    const [stream] = event.streams;
+    onStream(stream);
+  });
+
+  channel.addEventListener("offer", async (event) => {
+    console.log("receiver receive offer", event.detail);
+    const offer = event.detail;
+    peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    await channel.sendAnswer(answer);
+    await addIceCandidate(peerConnection);
+  });
+  channel.addEventListener("candidates", async (event) => {
+    const candidates = event.detail.init;
+    console.log("receiver receive candidate", candidates);
+    await addIceCandidate(peerConnection, candidates);
+  });
+  await channel.startReceiving();
 }
