@@ -1,8 +1,9 @@
 import { RealtimeChannel, createClient } from "@supabase/supabase-js";
+import { v4 as uuidv4 } from "uuid";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
-const stunUrl = import.meta.env.VITE_STUN_URL;
+const stunUrl = import.meta.env.VITE_STUN_URL || "stun:stun.qq.com:3478";
 const supabase = createClient(supabaseUrl, supabaseKey, {
   realtime: {
     params: {
@@ -69,7 +70,7 @@ class SupabaseSignalingChannel extends EventTarget {
   constructor(roomId: string, userId?: string) {
     super();
     this.roomId = roomId;
-    this.userId = userId || crypto.randomUUID();
+    this.userId = userId || uuidv4();
     this.roomChannel = supabase.channel(this.roomChannelName(), {
       config: {
         presence: {
@@ -156,11 +157,12 @@ class SupabaseSignalingChannel extends EventTarget {
     });
     this.selfUserChannel = userChannel;
     await new Promise((resolve) => {
-      userChannel.subscribe(() => {
-        this.roomChannel.subscribe(async () => {
-          const result = await this.roomChannel.track({ userId: this.userId });
-          resolve(result);
-        });
+      userChannel.subscribe(resolve);
+    });
+    await new Promise((resolve) => {
+      this.roomChannel.subscribe(async () => {
+        const result = await this.roomChannel.track({ userId: this.userId });
+        resolve(result);
       });
     });
   }
@@ -196,34 +198,36 @@ class SupabaseSignalingChannel extends EventTarget {
     return this.checkSendResult(result);
   }
   checkSendResult(result: string) {
-    if ('ok' !== result) {
+    if ("ok" !== result) {
       throw new Error(`failed to send: ${result}`);
     }
-    return result
+    return result;
   }
 }
 
-const candidatesMap = new Map<RTCPeerConnection, RTCIceCandidateInit[]>();
-async function addIceCandidate(
-  peerConnection: RTCPeerConnection,
-  candidates?: RTCIceCandidateInit[]
-) {
-  const _candidates = candidatesMap.get(peerConnection) || [];
-  if (candidates) {
-    _candidates.push(...candidates);
-  }
-  if ("stable" !== peerConnection.signalingState) {
-    candidatesMap.set(peerConnection, _candidates);
-    return;
-  }
-  if (!_candidates.length) {
-    return;
-  }
-  candidatesMap.delete(peerConnection);
-  const promises = _candidates.map((candidate) =>
-    peerConnection.addIceCandidate(candidate)
-  );
-  await Promise.all(promises);
+function createAddIceCandidateContext() {
+  const candidatesMap = new Map<RTCPeerConnection, RTCIceCandidateInit[]>();
+  return async function addIceCandidate(
+    peerConnection: RTCPeerConnection,
+    candidates?: RTCIceCandidateInit[]
+  ) {
+    const _candidates = candidatesMap.get(peerConnection) || [];
+    if (candidates) {
+      _candidates.push(...candidates);
+    }
+    if ("stable" !== peerConnection.signalingState) {
+      candidatesMap.set(peerConnection, _candidates);
+      return;
+    }
+    if (!_candidates.length) {
+      return;
+    }
+    candidatesMap.delete(peerConnection);
+    const promises = _candidates.map((candidate) =>
+      peerConnection.addIceCandidate(candidate)
+    );
+    await Promise.all(promises);
+  };
 }
 
 function collectAndSendCandicates(
@@ -267,6 +271,7 @@ function collectAndSendCandicates(
 export async function startStreaming(roomId: string, stream: MediaStream) {
   const channel = new SupabaseSignalingChannel(roomId);
   const peerConnectionMap = new Map<string, RTCPeerConnection>();
+  const addIceCandidate = createAddIceCandidateContext();
   channel.addEventListener("join", async (event) => {
     const { userId } = event.detail;
     // close old peer connection
@@ -279,6 +284,10 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
         "sender connectionstatechange",
         peerConnection.connectionState
       );
+      if ("disconnected" === peerConnection.connectionState) {
+        peerConnection.close();
+        peerConnectionMap.delete(userId);
+      }
     });
     collectAndSendCandicates(peerConnection, channel, userId);
     stream.getTracks().forEach((track) => {
@@ -324,6 +333,7 @@ export async function startReceiving(
   userId: string,
   onStream: (stream: MediaStream) => void
 ) {
+  const addIceCandidate = createAddIceCandidateContext();
   const channel = new SupabaseSignalingChannel(roomId, userId);
   const peerConnection = new RTCPeerConnection(configuration);
   collectAndSendCandicates(peerConnection, channel);
