@@ -293,6 +293,30 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
     stream.getTracks().forEach((track) => {
       peerConnection.addTrack(track, stream);
     });
+    const transceivers = peerConnection.getTransceivers()
+    transceivers.forEach((transceiver) => {
+      const kind = transceiver.sender.track?.kind;
+      if(!kind) {
+        return
+      }
+      let sendCodecs = RTCRtpSender.getCapabilities(kind)?.codecs
+      if(!sendCodecs) {
+        return
+      }
+
+      if("video" === kind) {
+        // let recvCodecs = RTCRtpReceiver.getCapabilities(kind).codecs
+        const preferredCodecs = sendCodecs.filter((codec) => {
+          return codec.mimeType === "video/H264"
+        })
+        transceiver.setCodecPreferences(preferredCodecs)
+      } else {
+        const preferredCodecs = sendCodecs.filter((codec) => {
+          return codec.mimeType !== "audio/opus"
+        })
+        transceiver.setCodecPreferences(preferredCodecs)
+      }
+    })
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     peerConnectionMap.set(userId, peerConnection);
