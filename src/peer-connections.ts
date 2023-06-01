@@ -3,7 +3,13 @@ import { RealtimeChannel, createClient } from "@supabase/supabase-js";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
 const stunUrl = import.meta.env.VITE_STUN_URL;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  realtime: {
+    params: {
+      eventsPerSecond: -1,
+    },
+  },
+});
 
 const configuration = {
   // iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -83,6 +89,9 @@ class SupabaseSignalingChannel extends EventTarget {
       console.log("presence join", payload);
       const { key: userId } = payload;
       if (this.userChannels.has(userId)) {
+        this.dispatchEvent(
+          new SupabaseSignalingChannelEvent("join", { detail: { userId } })
+        );
         return;
       }
       const userChannel = supabase.channel(this.userChannelName(userId));
@@ -105,12 +114,12 @@ class SupabaseSignalingChannel extends EventTarget {
       this.userChannels.set(userId, userChannel);
       await new Promise((resolve) => {
         userChannel.subscribe((result) => {
-          this.dispatchEvent(
-            new SupabaseSignalingChannelEvent("join", { detail: { userId } })
-          );
           resolve(result);
         });
       });
+      this.dispatchEvent(
+        new SupabaseSignalingChannelEvent("join", { detail: { userId } })
+      );
     });
     await new Promise((resolve) => {
       this.roomChannel.subscribe(resolve);
@@ -118,11 +127,15 @@ class SupabaseSignalingChannel extends EventTarget {
   }
   async sendOffer(userId: string, offer: RTCSessionDescriptionInit) {
     const userChannel = this.userChannels.get(userId);
-    await userChannel?.send({
+    if (!userChannel) {
+      throw new Error(`user channel not found: ${userId}`);
+    }
+    const result = await userChannel.send({
       type: "broadcast",
       event: "offer",
       offer,
     });
+    return this.checkSendResult(result);
   }
 
   async startReceiving() {
@@ -152,11 +165,15 @@ class SupabaseSignalingChannel extends EventTarget {
     });
   }
   async sendAnswer(answer: RTCSessionDescriptionInit) {
-    await this.selfUserChannel?.send({
+    if (!this.selfUserChannel) {
+      throw new Error(`self user channel not found`);
+    }
+    const result = await this.selfUserChannel.send({
       type: "broadcast",
       event: "answer",
       answer,
     });
+    return this.checkSendResult(result);
   }
   async sendCandidate(candidates: RTCIceCandidateInit[], userId?: string) {
     let userChannel: RealtimeChannel | undefined;
@@ -176,7 +193,13 @@ class SupabaseSignalingChannel extends EventTarget {
       event: "candidates",
       candidates: candidates,
     });
-    return result;
+    return this.checkSendResult(result);
+  }
+  checkSendResult(result: string) {
+    if ('ok' !== result) {
+      throw new Error(`failed to send: ${result}`);
+    }
+    return result
   }
 }
 
@@ -185,14 +208,15 @@ async function addIceCandidate(
   peerConnection: RTCPeerConnection,
   candidates?: RTCIceCandidateInit[]
 ) {
+  const _candidates = candidatesMap.get(peerConnection) || [];
+  if (candidates) {
+    _candidates.push(...candidates);
+  }
   if ("stable" !== peerConnection.signalingState) {
-    if (candidates) {
-      candidatesMap.set(peerConnection, candidates);
-    }
+    candidatesMap.set(peerConnection, _candidates);
     return;
   }
-  const _candidates = candidates || candidatesMap.get(peerConnection);
-  if (!_candidates) {
+  if (!_candidates.length) {
     return;
   }
   candidatesMap.delete(peerConnection);
@@ -207,21 +231,35 @@ function collectAndSendCandicates(
   channel: SupabaseSignalingChannel,
   userId?: string
 ) {
-  const CANDICATES_MAX_WAIT_TIME = 100;
+  const CANDICATES_WAIT_TIME = 100;
   let candidates: RTCIceCandidateInit[] = [];
-  const lastSendTime: number = Date.now();
+  let timer: NodeJS.Timeout;
+
+  async function sendCandidates() {
+    if (!candidates.length) {
+      return;
+    }
+    console.log("send candidates", candidates);
+    channel.sendCandidate(candidates, userId);
+    candidates = [];
+  }
   peerConnection.addEventListener("icecandidate", async (event) => {
     const candidate = event.candidate?.toJSON();
     if (!candidate) {
-      console.log("receiver icecandidate end");
-      await channel.sendCandidate(candidates, userId);
+      console.log("icecandidate end");
+      await sendCandidates();
       return;
-    } else if (Date.now() - lastSendTime > CANDICATES_MAX_WAIT_TIME) {
-      console.log("receiver icecandidate batch send");
-      await channel.sendCandidate(candidates, userId);
-      candidates = [];
     }
-    console.log("receiver icecandidate", candidate);
+
+    if (timer) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(async () => {
+      clearTimeout(timer);
+      await sendCandidates();
+    }, CANDICATES_WAIT_TIME);
+
+    console.log("icecandidate", candidate);
     candidates.push(candidate);
   });
 }
@@ -265,8 +303,8 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
   });
 
   channel.addEventListener("candidates", async (event) => {
-    console.log("sender receive candidate", event.detail);
     const init: RTCIceCandidateInit[] = event.detail.init;
+    console.log("sender receive candidate", init);
     const userId = event.detail.userId;
     if (!userId) {
       throw new Error("userId not found");
