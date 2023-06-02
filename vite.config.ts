@@ -1,9 +1,10 @@
-import basicSsl from '@vitejs/plugin-basic-ssl'
+import basicSsl from "@vitejs/plugin-basic-ssl";
 
 export default {
-  https: true,
-  strictPort: true,
-  plugins: [
-    basicSsl()
-  ]
-}
+  server: {
+    https: true,
+    strictPort: true,
+    host: true,
+  },
+  plugins: [basicSsl()],
+};
