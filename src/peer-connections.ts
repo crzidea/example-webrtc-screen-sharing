@@ -70,7 +70,7 @@ class SupabaseSignalingChannel extends EventTarget {
   constructor(roomId: string, userId?: string) {
     super();
     this.roomId = roomId;
-    this.userId = userId || uuidv4();
+    this.userId = userId || crypto.randomUUID();
     this.roomChannel = supabase.channel(this.roomChannelName(), {
       config: {
         presence: {

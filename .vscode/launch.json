@@ -8,7 +8,7 @@
             "type": "chrome",
             "request": "launch",
             "name": "sender",
-            "url": "http://localhost:5173/#/sender/1",
+            "url": "https://localhost:5173/#/sender/1",
             "webRoot": "${workspaceFolder}",
             "resolveSourceMapLocations": ["!**/node_modules/**"],
         },
@@ -16,7 +16,7 @@
             "type": "chrome",
             "request": "launch",
             "name": "receiver",
-            "url": "http://localhost:5173/#/receiver/1/1",
+            "url": "https://localhost:5173/#/receiver/1/1",
             "webRoot": "${workspaceFolder}",
             "resolveSourceMapLocations": ["!**/node_modules/**"],
         }
