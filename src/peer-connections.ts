@@ -2,7 +2,17 @@ import { RealtimeChannel, createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
-const stunUrl = import.meta.env.VITE_STUN_URL || "stun:stun.qq.com:3478";
+let stunUrl = import.meta.env.VITE_STUN_URL || "stun:stun.qq.com:3478";
+
+function getStunUrlFromPageUrl() {
+  const url = new URL(location.href);
+  const stun = url.searchParams.get("stun");
+  const stunUrl = `stun:${stun}`;
+  return stunUrl
+}
+
+stunUrl = getStunUrlFromPageUrl() || stunUrl;
+
 const supabase = createClient(supabaseUrl, supabaseKey, {
   realtime: {
     params: {
