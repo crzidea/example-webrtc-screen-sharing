@@ -70,6 +70,13 @@ export async function getStreamFromCamera() {
 }
 
 export async function getStreamFromDisplayMedia() {
-  const stream = await navigator.mediaDevices.getDisplayMedia();
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: {
+      // width: { ideal: 1920, max: 1920 },
+      height: { ideal: 1080, max: 1080 },
+      displaySurface: "monitor",
+    },
+    audio: false,
+  });
   return stream;
 }
