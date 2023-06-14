@@ -7,6 +7,9 @@ let stunUrl = import.meta.env.VITE_STUN_URL || "stun:stun.qq.com:3478";
 function getStunUrlFromPageUrl() {
   const url = new URL(location.href);
   const stun = url.searchParams.get("stun");
+  if (!stun) {
+    return;
+  }
   const stunUrl = `stun:${stun}`;
   return stunUrl
 }
