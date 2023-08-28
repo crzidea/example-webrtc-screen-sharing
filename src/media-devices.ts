@@ -94,7 +94,7 @@ export async function getStreamFromElectron() {
         minHeight: 1440,
         maxHeight: 1440,
       },
-    },
+    } as MediaTrackConstraints
   });
   return stream
 }
