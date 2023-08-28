@@ -2,6 +2,7 @@ import "./style.css";
 import {
   getStreamFromCamera,
   getStreamFromDisplayMedia,
+  getStreamFromElectron,
   playVideoWithStream,
 } from "./media-devices";
 import { startReceiving, startStreaming } from "./peer-connections";
@@ -29,7 +30,11 @@ async function main() {
     let stream;
     const MEDIA_STREAM = import.meta.env.VITE_MEDIA_STREAM;
     if ("display" === MEDIA_STREAM) {
-      stream = await getStreamFromDisplayMedia();
+      if (/ Electron\//.test(navigator.userAgent)) {
+        stream = await getStreamFromElectron()
+      } else {
+        stream = await getStreamFromDisplayMedia();
+      }
     } else {
       stream = await getStreamFromCamera();
     }

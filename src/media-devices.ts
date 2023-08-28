@@ -80,3 +80,21 @@ export async function getStreamFromDisplayMedia() {
   });
   return stream;
 }
+
+export async function getStreamFromElectron() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      mandatory: {
+        chromeMediaSource: "desktop",
+        chromeMediaSourceId: "screen:1:0",
+        minFrameRate: 60,
+        // minWidth: 2560,
+        // maxWidth: 2560,
+        minHeight: 1440,
+        maxHeight: 1440,
+      },
+    },
+  });
+  return stream
+}
