@@ -1,15 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC Screen Sharing</title>
-  </head>
-  <body>
-    <div id="app">
-      <!-- <select id="availableCameras"></select> -->
-      <video id="localVideo" autoplay muted playsinline controls="false"></video>
-    </div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebRTC Screen Sharing</title>
+  <style>
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <!-- <select id="availableCameras"></select> -->
+    <button onclick="localVideo.requestFullscreen();">Fullscreen</button>
+    <video id="localVideo" autoplay muted playsinline controls="false"></video>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>

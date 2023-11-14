@@ -11,7 +11,7 @@ function getStunUrlFromPageUrl() {
     return;
   }
   const stunUrl = `stun:${stun}`;
-  return stunUrl
+  return stunUrl;
 }
 
 stunUrl = getStunUrlFromPageUrl() || stunUrl;
@@ -303,32 +303,39 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
     });
     collectAndSendCandicates(peerConnection, channel, userId);
     stream.getTracks().forEach((track) => {
+      track.contentHint = "text";
       peerConnection.addTrack(track, stream);
     });
-    const transceivers = peerConnection.getTransceivers()
+    const transceivers = peerConnection.getTransceivers();
     transceivers.forEach((transceiver) => {
       const kind = transceiver.sender.track?.kind;
-      if(!kind) {
-        return
+      if (!kind) {
+        return;
       }
-      let sendCodecs = RTCRtpSender.getCapabilities(kind)?.codecs
-      if(!sendCodecs) {
-        return
+      let sendCodecs = RTCRtpSender.getCapabilities(kind)?.codecs;
+      if (!sendCodecs) {
+        return;
       }
 
-      if("video" === kind) {
+      if ("video" === kind) {
         // let recvCodecs = RTCRtpReceiver.getCapabilities(kind).codecs
         const preferredCodecs = sendCodecs.filter((codec) => {
-          return codec.mimeType === "video/H264"
-        })
-        transceiver.setCodecPreferences(preferredCodecs)
+          return (
+            codec.mimeType === "video/H264" &&
+            codec.sdpFmtpLine &&
+            /packetization-mode=1/.test(codec.sdpFmtpLine) &&
+            // /profile-level-id=4d/.test(codec.sdpFmtpLine)
+            true
+          );
+        });
+        transceiver.setCodecPreferences(preferredCodecs);
       } else {
         const preferredCodecs = sendCodecs.filter((codec) => {
-          return codec.mimeType !== "audio/opus"
-        })
-        transceiver.setCodecPreferences(preferredCodecs)
+          return codec.mimeType !== "audio/opus";
+        });
+        transceiver.setCodecPreferences(preferredCodecs);
       }
-    })
+    });
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     peerConnectionMap.set(userId, peerConnection);

@@ -56,6 +56,7 @@ export async function playVideoWithStream(stream: MediaProvider) {
     return;
   }
   videoElement.srcObject = stream;
+  // videoElement.requestFullscreen()
   // await videoElement.play();
 }
 
@@ -87,12 +88,13 @@ export async function getStreamFromElectron() {
     video: {
       mandatory: {
         chromeMediaSource: "desktop",
-        chromeMediaSourceId: "screen:1:0",
-        minFrameRate: 60,
+        // chromeMediaSourceId: "screen:1:0",
+        minFrameRate: 30,
+        maxFrameRate: 30,
         // minWidth: 2560,
         // maxWidth: 2560,
-        minHeight: 1440,
-        maxHeight: 1440,
+        minHeight: 900,
+        maxHeight: 900,
       },
     } as MediaTrackConstraints // Fix type error to support Electron
   });

@@ -38,7 +38,7 @@ async function main() {
     } else {
       stream = await getStreamFromCamera();
     }
-    playVideoWithStream(stream);
+    // playVideoWithStream(stream);
     startStreaming(roomId, stream);
   }
 }
