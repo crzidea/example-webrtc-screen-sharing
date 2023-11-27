@@ -280,6 +280,16 @@ function collectAndSendCandicates(
   });
 }
 
+function updateSdp(sdp: string | undefined) {
+  if (!sdp) {
+    return
+  }
+  // Improve bitrate
+  sdp = sdp.replace(/(m=video .*\r\n)/m, '$1b=AS:40000\r\n');
+  sdp = sdp.replace(/(a=fmtp:\d+ .+)\r\n/mg, '$1;x-google-max-bitrate=40000;x-google-min-bitrate=16000;x-google-start-bitrate=16000\r\n');
+  return sdp
+}
+
 export async function startStreaming(roomId: string, stream: MediaStream) {
   const channel = new SupabaseSignalingChannel(roomId);
   const peerConnectionMap = new Map<string, RTCPeerConnection>();
@@ -337,6 +347,9 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
       }
     });
     const offer = await peerConnection.createOffer();
+
+    offer.sdp = updateSdp(offer.sdp);
+
     await peerConnection.setLocalDescription(offer);
     peerConnectionMap.set(userId, peerConnection);
     await channel.sendOffer(userId, offer);
@@ -397,6 +410,7 @@ export async function startReceiving(
     try {
       peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peerConnection.createAnswer();
+      answer.sdp = updateSdp(answer.sdp);
       await peerConnection.setLocalDescription(answer);
       await channel.sendAnswer(answer);
       await addIceCandidate(peerConnection);
