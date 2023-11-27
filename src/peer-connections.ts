@@ -303,7 +303,7 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
     });
     collectAndSendCandicates(peerConnection, channel, userId);
     stream.getTracks().forEach((track) => {
-      track.contentHint = "text";
+      track.contentHint = "detail";
       peerConnection.addTrack(track, stream);
     });
     const transceivers = peerConnection.getTransceivers();
@@ -323,8 +323,8 @@ export async function startStreaming(roomId: string, stream: MediaStream) {
           return (
             codec.mimeType === "video/H264" &&
             codec.sdpFmtpLine &&
-            /packetization-mode=1/.test(codec.sdpFmtpLine) &&
-            // /profile-level-id=4d/.test(codec.sdpFmtpLine)
+            // /packetization-mode=1/.test(codec.sdpFmtpLine) &&
+            /profile-level-id=4200/.test(codec.sdpFmtpLine) &&
             true
           );
         });
@@ -394,11 +394,15 @@ export async function startReceiving(
   channel.addEventListener("offer", async (event) => {
     console.log("receiver receive offer", event.detail);
     const offer = event.detail;
-    peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    await channel.sendAnswer(answer);
-    await addIceCandidate(peerConnection);
+    try {
+      peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      await channel.sendAnswer(answer);
+      await addIceCandidate(peerConnection);
+    } catch (error) {
+      console.error(error)
+    }
   });
   channel.addEventListener("candidates", async (event) => {
     const candidates = event.detail.init;

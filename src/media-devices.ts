@@ -94,7 +94,7 @@ export async function getStreamFromElectron() {
         // minWidth: 2560,
         // maxWidth: 2560,
         minHeight: 900,
-        maxHeight: 900,
+        maxHeight: 1080,
       },
     } as MediaTrackConstraints // Fix type error to support Electron
   });
